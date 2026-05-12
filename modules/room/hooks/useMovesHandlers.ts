@@ -1,12 +1,13 @@
-import { useEffect, useMemo } from "react";
+import { useContext, useEffect, useMemo } from "react";
 
 import { getStringFromRgba } from "@/common/lib/rgba";
-import { socket } from "@/common/lib/socket";
+import { getSocket } from "@/common/lib/socket";
 import { useBackground } from "@/common/recoil/background";
 import { useSetSelection } from "@/common/recoil/options";
 import { useMyMoves, useRoom } from "@/common/recoil/room";
 import { useSetSavedMoves } from "@/common/recoil/savedMoves";
 
+import { roomContext } from "../context/Room.context";
 import { useCtx } from "./useCtx";
 import { useRefs } from "./useRefs";
 import { useSelection } from "./useSelection";
@@ -21,6 +22,8 @@ export const useMovesHandlers = (clearOnYourMove: () => void) => {
   const ctx = useCtx();
   const bg = useBackground();
   const { clearSelection } = useSetSelection();
+  const roomCtx = useContext(roomContext);
+  const undoneIds = roomCtx?.undoneIds ?? new Set();
 
   const sortedMoves = useMemo(() => {
     const { usersMoves, movesWithoutUser, myMoves } = room;
@@ -29,10 +32,13 @@ export const useMovesHandlers = (clearOnYourMove: () => void) => {
 
     usersMoves.forEach((userMoves) => moves.push(...userMoves));
 
-    moves.sort((a, b) => a.timestamp - b.timestamp);
+    // Filter out any moves that have been undone globally
+    const activeMoves = moves.filter((move) => !undoneIds.has(move.id));
 
-    return moves;
-  }, [room]);
+    activeMoves.sort((a, b) => a.timestamp - b.timestamp);
+
+    return activeMoves;
+  }, [room, undoneIds]);
 
   const copyCanvasToSmall = () => {
     if (canvasRef.current && minimapRef.current && bgRef.current) {
@@ -153,15 +159,20 @@ export const useMovesHandlers = (clearOnYourMove: () => void) => {
   useSelection(drawAllMoves);
 
   useEffect(() => {
-    socket.on("your_move", (move) => {
-      clearOnYourMove();
-      handleAddMyMove(move);
-      setTimeout(clearSelection, 100);
-    });
+    try {
+      const socket = getSocket();
+      socket.on("your_move", (move) => {
+        clearOnYourMove();
+        handleAddMyMove(move);
+        setTimeout(clearSelection, 100);
+      });
 
-    return () => {
-      socket.off("your_move");
-    };
+      return () => {
+        socket.off("your_move");
+      };
+    } catch {
+      // Socket not available
+    }
   }, [clearOnYourMove, clearSelection, handleAddMyMove]);
 
   useEffect(() => {
@@ -192,7 +203,12 @@ export const useMovesHandlers = (clearOnYourMove: () => void) => {
       if (move?.options.mode === "select") clearSelection();
       else if (move) {
         addSavedMove(move);
-        socket.emit("undo");
+        try {
+          const socket = getSocket();
+          socket.emit("undo");
+        } catch {
+          // Socket not available
+        }
       }
     }
   };
@@ -203,7 +219,13 @@ export const useMovesHandlers = (clearOnYourMove: () => void) => {
       const move = removeSavedMove();
 
       if (move) {
-        socket.emit("draw", move);
+        handleAddMyMove(move);
+        try {
+          const socket = getSocket();
+          socket.emit("redo");
+        } catch {
+          // Socket not available
+        }
       }
     }
   };

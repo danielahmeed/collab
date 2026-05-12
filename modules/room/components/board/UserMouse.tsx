@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { BsCursorFill } from "react-icons/bs";
 
-import { socket } from "@/common/lib/socket";
+import { getSocket } from "@/common/lib/socket";
 import { useRoom } from "@/common/recoil/room";
 
 import { useBoardPosition } from "../../hooks/useBoardPosition";
@@ -18,27 +18,32 @@ const UserMouse = ({ userId }: { userId: string }) => {
   const [pos, setPos] = useState({ x: -1, y: -1 });
 
   useEffect(() => {
-    socket.on("mouse_moved", (newX, newY, socketIdMoved) => {
-      if (socketIdMoved === userId) {
-        setPos({ x: newX, y: newY });
-      }
-    });
+    try {
+      const socket = getSocket();
+      socket.on("mouse_moved", (newX, newY, socketIdMoved) => {
+        if (socketIdMoved === userId) {
+          setPos({ x: newX, y: newY });
+        }
+      });
 
-    const handleNewMsg = (msgUserId: string, newMsg: string) => {
-      if (msgUserId === userId) {
-        setMsg(newMsg);
+      const handleNewMsg = (msgUserId: string, newMsg: string) => {
+        if (msgUserId === userId) {
+          setMsg(newMsg);
 
-        setTimeout(() => {
-          setMsg("");
-        }, 3000);
-      }
-    };
-    socket.on("new_msg", handleNewMsg);
+          setTimeout(() => {
+            setMsg("");
+          }, 3000);
+        }
+      };
+      socket.on("new_msg", handleNewMsg);
 
-    return () => {
-      socket.off("mouse_moved");
-      socket.off("new_msg", handleNewMsg);
-    };
+      return () => {
+        socket.off("mouse_moved");
+        socket.off("new_msg", handleNewMsg);
+      };
+    } catch {
+      // Socket not available
+    }
   }, [userId]);
 
   useEffect(() => {

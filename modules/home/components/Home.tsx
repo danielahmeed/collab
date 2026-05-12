@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 
 import { useRouter } from "next/router";
 
-import { socket } from "@/common/lib/socket";
+import { initSocket, getSocket } from "@/common/lib/socket";
 import { useModal } from "@/common/recoil/modal";
 import { useSetRoomId } from "@/common/recoil/room";
 
@@ -14,14 +14,28 @@ const Home = () => {
 
   const [roomId, setRoomId] = useState("");
   const [username, setUsername] = useState("");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const router = useRouter();
 
   useEffect(() => {
     document.body.style.backgroundColor = "white";
+
+    // Check if token exists in localStorage
+    const storedToken = localStorage.getItem("auth_token");
+    if (storedToken) {
+      initSocket(storedToken);
+      setIsAuthenticated(true);
+    }
   }, []);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const socket = getSocket();
+
     socket.on("created", (roomIdFromServer) => {
       setAtomRoomId(roomIdFromServer);
       router.push(roomIdFromServer);
@@ -42,42 +56,115 @@ const Home = () => {
       socket.off("created");
       socket.off("joined", handleJoinedRoom);
     };
-  }, [openModal, roomId, router, setAtomRoomId]);
+  }, [openModal, roomId, router, setAtomRoomId, isAuthenticated]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const socket = getSocket();
     socket.emit("leave_room");
     setAtomRoomId("");
-  }, [setAtomRoomId]);
+
+    return () => {
+      setAtomRoomId("");
+    };
+  }, [setAtomRoomId, isAuthenticated]);
+
+  const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setError("");
+    setIsLoading(true);
+
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Login failed");
+      }
+
+      const { token } = await response.json();
+      localStorage.setItem("auth_token", token);
+      initSocket(token);
+      setIsAuthenticated(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("auth_token");
+    setIsAuthenticated(false);
+    setUsername("");
+    setRoomId("");
+  };
 
   const handleCreateRoom = () => {
-    socket.emit("create_room", username);
+    const socket = getSocket();
+    socket.emit("create_room");
   };
 
   const handleJoinRoom = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
-    if (roomId) socket.emit("join_room", roomId, username);
+    if (roomId) {
+      const socket = getSocket();
+      socket.emit("join_room", roomId);
+    }
   };
+
+  if (!isAuthenticated) {
+    return (
+      <div className="flex flex-col items-center py-24">
+        <h1 className="text-5xl font-extrabold leading-tight sm:text-extra">
+          Digiboard
+        </h1>
+        <h3 className="text-xl sm:text-2xl">Real-time whiteboard</h3>
+
+        <form
+          className="mt-10 flex flex-col items-center gap-3 w-96"
+          onSubmit={handleLogin}
+        >
+          <label className="self-start font-bold leading-tight">
+            Enter your name to continue
+          </label>
+          <input
+            className="input"
+            id="username"
+            placeholder="Username..."
+            value={username}
+            onChange={(e) => setUsername(e.target.value.slice(0, 15))}
+            disabled={isLoading}
+          />
+          {error && <p className="text-red-500 text-sm">{error}</p>}
+          <button className="btn" type="submit" disabled={isLoading || !username}>
+            {isLoading ? "Logging in..." : "Login"}
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col items-center py-24">
+      <div className="absolute top-5 right-5">
+        <button
+          className="text-sm text-zinc-500 hover:text-zinc-700"
+          onClick={handleLogout}
+        >
+          Logout
+        </button>
+      </div>
+
       <h1 className="text-5xl font-extrabold leading-tight sm:text-extra">
         Digiboard
       </h1>
       <h3 className="text-xl sm:text-2xl">Real-time whiteboard</h3>
-
-      <div className="mt-10 flex flex-col gap-2">
-        <label className="self-start font-bold leading-tight">
-          Enter your name
-        </label>
-        <input
-          className="input"
-          id="room-id"
-          placeholder="Username..."
-          value={username}
-          onChange={(e) => setUsername(e.target.value.slice(0, 15))}
-        />
-      </div>
 
       <div className="my-8 h-px w-96 bg-zinc-200" />
 

@@ -5,7 +5,7 @@ import { BsArrowsMove } from "react-icons/bs";
 
 import { CANVAS_SIZE } from "@/common/constants/canvasSize";
 import { useViewportSize } from "@/common/hooks/useViewportSize";
-import { socket } from "@/common/lib/socket";
+import { getSocket } from "@/common/lib/socket";
 
 import { useBoardPosition } from "../../hooks/useBoardPosition";
 import { useCtx } from "../../hooks/useCtx";
@@ -63,7 +63,14 @@ const Canvas = () => {
   }, [canvasRef, dragging, handleRedo, handleUndo, redoRef, undoRef]);
 
   useEffect(() => {
-    if (ctx) socket.emit("joined_room");
+    if (ctx) {
+      try {
+        const socket = getSocket();
+        socket.emit("joined_room");
+      } catch {
+        // Socket not available
+      }
+    }
   }, [ctx]);
 
   return (

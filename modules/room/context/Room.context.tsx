@@ -13,7 +13,7 @@ import { MotionValue, useMotionValue } from "framer-motion";
 import { toast } from "react-toastify";
 
 import { COLORS_ARRAY } from "@/common/constants/colors";
-import { socket } from "@/common/lib/socket";
+import { getSocket } from "@/common/lib/socket";
 import { useSetUsers } from "@/common/recoil/room";
 import { useSetRoom, useRoom } from "@/common/recoil/room/room.hooks";
 
@@ -34,6 +34,7 @@ export const roomContext = createContext<{
       y?: number | undefined;
     }>
   >;
+  undoneIds: Set<string>;
 }>(null!);
 
 const RoomContextProvider = ({ children }: { children: ReactChild }) => {
@@ -54,60 +55,103 @@ const RoomContextProvider = ({ children }: { children: ReactChild }) => {
     y?: number;
   }>({ base64: "" });
 
+  const [undoneIds, setUndoneIds] = useState<Set<string>>(new Set());
+
   const x = useMotionValue(0);
   const y = useMotionValue(0);
 
   useEffect(() => {
-    socket.on("room", (room, usersMovesToParse, usersToParse) => {
-      const usersMoves = new Map<string, Move[]>(JSON.parse(usersMovesToParse));
-      const usersParsed = new Map<string, string>(JSON.parse(usersToParse));
+    try {
+      const socket = getSocket();
 
-      const newUsers = new Map<string, User>();
+      socket.on(
+        "room",
+        (
+          room: { drawed: Move[] },
+          usersMovesToParse: string,
+          usersToParse: string,
+          redoMovesToParse: string,
+          undoneIds?: string[]
+        ) => {
+          const usersMoves = new Map<string, Move[]>(JSON.parse(usersMovesToParse));
+          const redoMoves = new Map<string, Move[]>(JSON.parse(redoMovesToParse));
+          const usersParsed = new Map<string, string>(JSON.parse(usersToParse));
 
-      usersParsed.forEach((name, id) => {
-        if (id === socket.id) return;
+          const newUsers = new Map<string, User>();
 
-        const index = [...usersParsed.keys()].indexOf(id);
+          usersParsed.forEach((name: string, id: string) => {
+            if (id === socket.id) return;
 
-        const color = COLORS_ARRAY[index % COLORS_ARRAY.length];
+            const index = [...usersParsed.keys()].indexOf(id);
 
-        newUsers.set(id, {
-          name,
-          color,
+            const color = COLORS_ARRAY[index % COLORS_ARRAY.length];
+
+            newUsers.set(id, {
+              name,
+              color,
+              userId: id,
+            });
+          });
+
+          setRoom((prev) => ({
+            ...prev,
+            users: newUsers,
+            usersMoves,
+            redoMoves,
+            movesWithoutUser: room.drawed,
+          }));
+
+          // Track which move IDs have been undone globally
+          setUndoneIds(new Set(undoneIds ?? []));
+        }
+      );
+
+      socket.on("new_user", (userId: string, username: string) => {
+        toast(`${username} has joined the room.`, {
+          position: "top-center",
+          theme: "colored",
+        });
+
+        handleAddUser(userId, username);
+      });
+
+      socket.on("user_disconnected", (userId: string) => {
+        toast(`${users.get(userId)?.name || "Anonymous"} has left the room.`, {
+          position: "top-center",
+          theme: "colored",
+        });
+
+        handleRemoveUser(userId);
+      });
+
+      socket.on("user_undo", (userId: string, moveId: string) => {
+        // Mark this move ID as undone globally
+        setUndoneIds((prev) => {
+          const updated = new Set(prev);
+          updated.add(moveId);
+          return updated;
         });
       });
 
-      setRoom((prev) => ({
-        ...prev,
-        users: newUsers,
-        usersMoves,
-        movesWithoutUser: room.drawed,
-      }));
-    });
-
-    socket.on("new_user", (userId, username) => {
-      toast(`${username} has joined the room.`, {
-        position: "top-center",
-        theme: "colored",
+      socket.on("user_redo", (userId: string, moveId: string) => {
+        // Move is no longer undone
+        setUndoneIds((prev) => {
+          const updated = new Set(prev);
+          updated.delete(moveId);
+          return updated;
+        });
       });
 
-      handleAddUser(userId, username);
-    });
-
-    socket.on("user_disconnected", (userId) => {
-      toast(`${users.get(userId)?.name || "Anonymous"} has left the room.`, {
-        position: "top-center",
-        theme: "colored",
-      });
-
-      handleRemoveUser(userId);
-    });
-
-    return () => {
-      socket.off("room");
-      socket.off("new_user");
-      socket.off("user_disconnected");
-    };
+      return () => {
+        socket.off("room");
+        socket.off("new_user");
+        socket.off("user_disconnected");
+        socket.off("user_undo");
+        socket.off("user_redo");
+      };
+    } catch {
+      // Socket not initialized
+    }
   }, [handleAddUser, handleRemoveUser, setRoom, users]);
 
   return (
@@ -123,6 +167,7 @@ const RoomContextProvider = ({ children }: { children: ReactChild }) => {
         moveImage,
         minimapRef,
         selectionRefs,
+        undoneIds,
       }}
     >
       {children}

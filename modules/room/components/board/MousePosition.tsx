@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { useInterval, useMouse } from "react-use";
 
 import { getPos } from "@/common/lib/getPos";
-import { socket } from "@/common/lib/socket";
+import { getSocket } from "@/common/lib/socket";
 
 import { useBoardPosition } from "../../hooks/useBoardPosition";
 
@@ -24,10 +24,15 @@ const MousePosition = () => {
       (prevPosition.current.x !== docX || prevPosition.current.y !== docY) &&
       !touchDevice
     ) {
-      socket.emit("mouse_move", getPos(docX, x), getPos(docY, y));
+      try {
+        const socket = getSocket();
+        socket.emit("mouse_move", getPos(docX, x), getPos(docY, y));
+      } catch {
+        // Socket not available
+      }
       prevPosition.current = { x: docX, y: docY };
     }
-  }, 150);
+  }, 250);
 
   if (touchDevice) return null;
 

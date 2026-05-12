@@ -1,40 +1,39 @@
 import { useEffect } from "react";
 
-import { socket } from "@/common/lib/socket";
+import { getSocket } from "@/common/lib/socket";
 import { useSetUsers } from "@/common/recoil/room";
 
 export const useSocketDraw = (drawing: boolean) => {
   const { handleAddMoveToUser, handleRemoveMoveFromUser } = useSetUsers();
 
+  // Keep user_draw listener alive (don't resubscribe on drawing state change)
   useEffect(() => {
-    let moveToDrawLater: Move | undefined;
-    let userIdLater = "";
-
-    socket.on("user_draw", (move, userId) => {
-      if (!drawing) {
+    try {
+      const socket = getSocket();
+      socket.on("user_draw", (move, userId) => {
         handleAddMoveToUser(userId, move);
-      } else {
-        moveToDrawLater = move;
-        userIdLater = userId;
-      }
-    });
+      });
 
-    return () => {
-      socket.off("user_draw");
-
-      if (moveToDrawLater && userIdLater) {
-        handleAddMoveToUser(userIdLater, moveToDrawLater);
-      }
-    };
-  }, [drawing, handleAddMoveToUser]);
+      return () => {
+        socket.off("user_draw");
+      };
+    } catch {
+      // Socket not available
+    }
+  }, [handleAddMoveToUser]);
 
   useEffect(() => {
-    socket.on("user_undo", (userId) => {
-      handleRemoveMoveFromUser(userId);
-    });
+    try {
+      const socket = getSocket();
+      socket.on("user_undo", (userId) => {
+        handleRemoveMoveFromUser(userId);
+      });
 
-    return () => {
-      socket.off("user_undo");
-    };
+      return () => {
+        socket.off("user_undo");
+      };
+    } catch {
+      // Socket not available
+    }
   }, [handleRemoveMoveFromUser]);
 };

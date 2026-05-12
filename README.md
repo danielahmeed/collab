@@ -1,9 +1,11 @@
 # Task 4 : Real-Time Collaborative Whiteboard
 
 ## Overview
+
 The Whiteboard Project aims to create a digital whiteboard application that allows users to collaborate in real-time, share ideas, and brainstorm effectively.
 
 ## Features
+
 - Real-time collaboration
 - Drawing tools (pen, highlighter, shapes)
 - Text tools (text boxes, fonts)
@@ -14,51 +16,65 @@ The Whiteboard Project aims to create a digital whiteboard application that allo
 - Integration with other collaboration tools (e.g., Slack, Microsoft Teams)
 
 ## Technologies
+
 - Frontend: React, Next.js
 - Backend: Node.js with WebSocket (Socket.IO), Express
 - Database: MongoDB
 - Authentication: JWT, OAuth
 
-
 ## Setup Instructions
 
 1. **Clone the repository:**
-    ```bash
-    https://github.com/kashish281/Whiteboard.git
-    cd whiteboard
-    ```
+
+   ```bash
+   https://github.com/kashish281/Whiteboard.git
+   cd whiteboard
+   ```
 
 2. **Install dependencies:**
-    ```bash
-    npm install
-    ```
 
-3. **Run the development server:**
-    ```bash
-    npm run dev
-    ```
+   ```bash
+   npm install
+   ```
 
-4. **Build the project:**
-    ```bash
-    npm run build
-    ```
+3. **Configure environment variables:**
+   Create a `.env.local` file in the project root:
 
-5. **Start the production server:**
-    ```bash
-    npm start
-    ```
+   ```bash
+   MONGODB_URI=mongodb://127.0.0.1:27017
+   MONGODB_DB_NAME=digiboard
+   PORT=3000
+   ```
+
+4. **Run the development server:**
+
+   ```bash
+   npm run dev
+   ```
+
+5. **Build the project:**
+
+   ```bash
+   npm run build
+   ```
+
+6. **Start the production server:**
+   ```bash
+   npm start
+   ```
 
 ## Deployment Instructions
 
 1. **Build the project:**
-    ```bash
-    npm run build
-    ```
+
+   ```bash
+   npm run build
+   ```
 
 2. **Deploy to GitHub Pages:**
-    ```bash
-    npm run deploy
-    ```
+   ```bash
+   npm run deploy
+   ```
 
 ## Scripts
 
@@ -72,8 +88,4 @@ The Whiteboard Project aims to create a digital whiteboard application that allo
 - `predeploy`: Runs the build script before deploying.
 - `deploy`: Deploys the project to GitHub Pages.
 
-
-
 ---
-
-

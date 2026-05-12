@@ -3,7 +3,7 @@ import { useEffect, useMemo } from "react";
 import { toast } from "react-toastify";
 
 import { DEFAULT_MOVE } from "@/common/constants/defaultMove";
-import { socket } from "@/common/lib/socket";
+import { getSocket } from "@/common/lib/socket";
 import { useOptionsValue } from "@/common/recoil/options";
 
 import { useCtx } from "./useCtx";
@@ -170,7 +170,12 @@ export const useSelection = (drawAllMoves: () => Promise<void>) => {
       },
     };
 
-    socket.emit("draw", move);
+    try {
+      const socket = getSocket();
+      socket.emit("draw", move);
+    } catch {
+      // Socket not available
+    }
 
     return move;
   };

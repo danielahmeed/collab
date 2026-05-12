@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 
 import { useRouter } from "next/router";
 
-import { socket } from "@/common/lib/socket";
+import { getSocket } from "@/common/lib/socket";
 import { useModal } from "@/common/recoil/modal";
 import { useSetRoomId } from "@/common/recoil/room";
 import NotFoundModal from "@/modules/home/modals/NotFound";
@@ -11,47 +11,61 @@ const NameInput = () => {
   const setRoomId = useSetRoomId();
   const { openModal } = useModal();
 
-  const [name, setName] = useState("");
-
   const router = useRouter();
   const roomId = (router.query.roomId || "").toString();
 
   useEffect(() => {
     if (!roomId) return;
 
-    socket.emit("check_room", roomId);
+    try {
+      const socket = getSocket();
+      socket.emit("check_room", roomId);
 
-    socket.on("room_exists", (exists) => {
-      if (!exists) {
-        router.push("/");
-      }
-    });
+      socket.on("room_exists", (exists) => {
+        if (!exists) {
+          router.push("/");
+        }
+      });
 
-    // eslint-disable-next-line consistent-return
-    return () => {
-      socket.off("room_exists");
-    };
+      // eslint-disable-next-line consistent-return
+      return () => {
+        socket.off("room_exists");
+      };
+    } catch {
+      // Socket not initialized yet, redirect to home
+      router.push("/");
+    }
   }, [roomId, router]);
 
   useEffect(() => {
-    const handleJoined = (roomIdFromServer: string, failed?: boolean) => {
-      if (failed) {
-        router.push("/");
-        openModal(<NotFoundModal id={roomIdFromServer} />);
-      } else setRoomId(roomIdFromServer);
-    };
+    try {
+      const socket = getSocket();
+      const handleJoined = (roomIdFromServer: string, failed?: boolean) => {
+        if (failed) {
+          router.push("/");
+          openModal(<NotFoundModal id={roomIdFromServer} />);
+        } else setRoomId(roomIdFromServer);
+      };
 
-    socket.on("joined", handleJoined);
+      socket.on("joined", handleJoined);
 
-    return () => {
-      socket.off("joined", handleJoined);
-    };
+      return () => {
+        socket.off("joined", handleJoined);
+      };
+    } catch {
+      // Socket not initialized
+    }
   }, [openModal, router, setRoomId]);
 
   const handleJoinRoom = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
-    socket.emit("join_room", roomId, name);
+    try {
+      const socket = getSocket();
+      socket.emit("join_room", roomId);
+    } catch {
+      router.push("/");
+    }
   };
 
   return (
@@ -60,21 +74,14 @@ const NameInput = () => {
       onSubmit={handleJoinRoom}
     >
       <h1 className="text-5xl font-extrabold leading-tight sm:text-extra">
-        Collabio
+        Digiboard
       </h1>
       <h3 className="text-xl sm:text-2xl">Real-time whiteboard</h3>
 
       <div className="mt-10 mb-3 flex flex-col gap-2">
         <label className="self-start font-bold leading-tight">
-          Enter your name
+          Entering room {roomId}
         </label>
-        <input
-          className="rounded-xl border p-5 py-1"
-          id="room-id"
-          placeholder="Username..."
-          value={name}
-          onChange={(e) => setName(e.target.value.slice(0, 15))}
-        />
       </div>
 
       <button className="btn" type="submit">

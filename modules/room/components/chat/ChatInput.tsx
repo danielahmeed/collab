@@ -2,7 +2,7 @@ import { FormEvent, useState } from "react";
 
 import { AiOutlineSend } from "react-icons/ai";
 
-import { socket } from "@/common/lib/socket";
+import { getSocket } from "@/common/lib/socket";
 
 const ChatInput = () => {
   const [msg, setMsg] = useState("");
@@ -10,7 +10,12 @@ const ChatInput = () => {
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
-    socket.emit("send_msg", msg);
+    try {
+      const socket = getSocket();
+      socket.emit("send_msg", msg);
+    } catch {
+      // Socket not available
+    }
 
     setMsg("");
   };

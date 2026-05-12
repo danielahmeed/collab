@@ -6,7 +6,7 @@ import { FaChevronDown } from "react-icons/fa";
 import { useList } from "react-use";
 
 import { DEFAULT_EASE } from "@/common/constants/easings";
-import { socket } from "@/common/lib/socket";
+import { getSocket } from "@/common/lib/socket";
 import { useRoom } from "@/common/recoil/room";
 
 import ChatInput from "./ChatInput";
@@ -38,11 +38,16 @@ const Chat = () => {
       if (!opened) setNewMsg(true);
     };
 
-    socket.on("new_msg", handleNewMsg);
+    try {
+      const socket = getSocket();
+      socket.on("new_msg", handleNewMsg);
 
-    return () => {
-      socket.off("new_msg", handleNewMsg);
-    };
+      return () => {
+        socket.off("new_msg", handleNewMsg);
+      };
+    } catch {
+      // Socket not available
+    }
   }, [handleMsgs, msgs, opened, room.users]);
 
   return (

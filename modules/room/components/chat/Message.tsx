@@ -1,7 +1,19 @@
-import { socket } from "@/common/lib/socket";
+import { useEffect, useState } from "react";
 
+import { getSocket } from "@/common/lib/socket";
 const Message = ({ userId, msg, username, color }: Message) => {
-  const me = socket.id === userId;
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const socket = getSocket();
+      setCurrentUserId(socket.id);
+    } catch {
+      // Socket not available
+    }
+  }, []);
+
+  const me = currentUserId === userId;
 
   return (
     <div

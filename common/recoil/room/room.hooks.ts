@@ -39,6 +39,7 @@ export const useSetUsers = () => {
       newUsers.set(userId, {
         name,
         color,
+        userId,
       });
       newUsersMoves.set(userId, []);
 

@@ -5,7 +5,7 @@ import { AiOutlineCheck, AiOutlineClose } from "react-icons/ai";
 
 import { DEFAULT_MOVE } from "@/common/constants/defaultMove";
 import { getPos } from "@/common/lib/getPos";
-import { socket } from "@/common/lib/socket";
+import { getSocket } from "@/common/lib/socket";
 
 import { useBoardPosition } from "../../hooks/useBoardPosition";
 import { useMoveImage } from "../../hooks/useMoveImage";
@@ -40,7 +40,12 @@ const MoveImage = () => {
       },
     };
 
-    socket.emit("draw", move);
+    try {
+      const socket = getSocket();
+      socket.emit("draw", move);
+    } catch {
+      // Socket not available
+    }
 
     setMoveImage({ base64: "" });
     imageX.set(50);

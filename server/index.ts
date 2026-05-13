@@ -6,8 +6,8 @@ import express from "express";
 import { Collection, MongoClient } from "mongodb";
 import next, { NextApiHandler } from "next";
 import { Server } from "socket.io";
+import { request as httpsRequest } from "https";
 import { v4 } from "uuid";
-import { generateToken, verifyToken } from "../common/lib/jwt";
 
 const port = parseInt(process.env.PORT || "3000", 10);
 const dev = process.env.NODE_ENV !== "production";
@@ -21,6 +21,153 @@ type PersistedRoom = {
   drawed: Move[];
   createdAt: Date;
   updatedAt: Date;
+};
+
+type SessionRecord = {
+  _id: string;
+  userId: string;
+  username: string;
+  provider: "google";
+  email: string;
+  picture?: string;
+  createdAt: Date;
+  updatedAt: Date;
+  expiresAt: Date;
+  revokedAt?: Date | null;
+};
+
+const SESSION_COOKIE_NAME = "digiboard_session";
+const OAUTH_STATE_COOKIE_NAME = "digiboard_oauth_state";
+const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
+const GOOGLE_SCOPE = "openid email profile";
+
+type GoogleUserInfo = {
+  sub: string;
+  email: string;
+  email_verified?: boolean;
+  name?: string;
+  picture?: string;
+};
+
+type GoogleTokenResponse = {
+  access_token: string;
+  expires_in: number;
+  id_token: string;
+  refresh_token?: string;
+  scope: string;
+  token_type: string;
+};
+
+const parseCookies = (cookieHeader?: string) => {
+  if (!cookieHeader) return new Map<string, string>();
+
+  return new Map(
+    cookieHeader
+      .split(";")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const separatorIndex = part.indexOf("=");
+        if (separatorIndex === -1) {
+          return [part, ""];
+        }
+
+        const name = part.slice(0, separatorIndex).trim();
+        const value = part.slice(separatorIndex + 1).trim();
+        return [name, decodeURIComponent(value)];
+      })
+  );
+};
+
+const serializeCookie = (name: string, value: string, maxAgeMs?: number) => {
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+  ];
+
+  if (typeof maxAgeMs === "number") {
+    parts.push(`Max-Age=${Math.floor(maxAgeMs / 1000)}`);
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    parts.push("Secure");
+  }
+
+  return parts.join("; ");
+};
+
+const clearCookie = (name: string) => {
+  const parts = [`${name}=;`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
+
+  if (process.env.NODE_ENV === "production") {
+    parts.push("Secure");
+  }
+
+  return parts.join("; ");
+};
+
+const createOauthState = () => v4();
+
+const requestJson = <T,>(url: string, method: string, body?: string) =>
+  new Promise<T>((resolve, reject) => {
+    const request = httpsRequest(
+      url,
+      {
+        method,
+        headers: {
+          "Content-Type": body ? "application/x-www-form-urlencoded" : "application/json",
+          ...(body ? { "Content-Length": Buffer.byteLength(body) } : {}),
+        },
+      },
+      (response) => {
+        let raw = "";
+        response.on("data", (chunk: string | Buffer) => {
+          raw += chunk.toString("utf8");
+        });
+        response.on("end", () => {
+          if (response.statusCode && response.statusCode >= 400) {
+            reject(new Error(`Request failed with status ${response.statusCode}: ${raw}`));
+            return;
+          }
+
+          try {
+            resolve(JSON.parse(raw) as T);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      }
+    );
+
+    request.on("error", reject);
+    if (body) {
+      request.write(body);
+    }
+    request.end();
+  });
+
+const fetchGoogleToken = async (code: string, redirectUri: string) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new Error("Google OAuth is not configured");
+  }
+
+  const body = new URLSearchParams({
+    code,
+    client_id: clientId,
+    client_secret: clientSecret,
+    redirect_uri: redirectUri,
+    grant_type: "authorization_code",
+  }).toString();
+
+  return requestJson<GoogleTokenResponse>(GOOGLE_TOKEN_URL, "POST", body);
 };
 
 console.log("Preparing nextApp...");
@@ -41,12 +188,18 @@ nextApp.prepare().then(async () => {
 
   console.log("Connecting to MongoDB...");
   let roomsCollection: Collection<PersistedRoom> | null = null;
+  let sessionsCollection: Collection<SessionRecord> | null = null;
   try {
     await mongoClient.connect();
     console.log("Connected to MongoDB");
     roomsCollection = mongoClient
       .db(mongoDbName)
       .collection<PersistedRoom>("rooms");
+    sessionsCollection = mongoClient
+      .db(mongoDbName)
+      .collection<SessionRecord>("sessions");
+
+    await sessionsCollection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
   } catch (err) {
     // If MongoDB is not available, continue running with in-memory state only.
     // This prevents the process from crashing on startup in environments
@@ -56,48 +209,216 @@ nextApp.prepare().then(async () => {
     console.warn("Could not connect to MongoDB, running without persistence:", err);
   }
 
+  const authenticatedUsers = new Map<string, { userId: string; username: string }>();
+
+  const getSessionIdFromRequest = (cookieHeader?: string) => {
+    const cookies = parseCookies(cookieHeader);
+    return cookies.get(SESSION_COOKIE_NAME) || null;
+  };
+
+  const getOauthStateFromRequest = (cookieHeader?: string) => {
+    const cookies = parseCookies(cookieHeader);
+    return cookies.get(OAUTH_STATE_COOKIE_NAME) || null;
+  };
+
+  const getSessionById = async (sessionId: string) => {
+    if (!sessionsCollection) return null;
+
+    return sessionsCollection.findOne({
+      _id: sessionId,
+      revokedAt: null,
+      expiresAt: { $gt: new Date() },
+    });
+  };
+
+  const createSession = async ({
+    userId,
+    username,
+    email,
+    picture,
+  }: {
+    userId: string;
+    username: string;
+    email: string;
+    picture?: string;
+  }) => {
+    const sessionId = v4();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + SESSION_MAX_AGE_MS);
+
+    if (sessionsCollection) {
+      await sessionsCollection.insertOne({
+        _id: sessionId,
+        userId,
+        username,
+        provider: "google",
+        email,
+        picture,
+        createdAt: now,
+        updatedAt: now,
+        expiresAt,
+        revokedAt: null,
+      });
+    }
+
+    return sessionId;
+  };
+
+  const revokeSession = async (sessionId: string | null) => {
+    if (!sessionId || !sessionsCollection) return;
+
+    await sessionsCollection.updateOne(
+      { _id: sessionId },
+      {
+        $set: {
+          revokedAt: new Date(),
+          updatedAt: new Date(),
+        },
+      }
+    );
+  };
+
   const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
-    cors: { origin: "*" },
+    cors: { origin: true, credentials: true },
   });
 
   // Socket.IO authentication middleware
-  io.use((socket, next) => {
-    const token = socket.handshake.auth.token as string;
-    if (!token) {
-      socket.emit("auth_required");
-      return next(new Error("Authentication required"));
+  io.use(async (socket, next) => {
+    try {
+      const sessionId =
+        getSessionIdFromRequest(socket.handshake.headers.cookie) ||
+        (socket.handshake.auth.sessionId as string | undefined) ||
+        null;
+
+      if (!sessionId) {
+        socket.emit("auth_required");
+        return next(new Error("Authentication required"));
+      }
+
+      const session = await getSessionById(sessionId);
+      if (!session) {
+        socket.emit("auth_required");
+        return next(new Error("Invalid or expired session"));
+      }
+
+      // Store user info on socket
+      (socket as any).sessionId = session._id;
+      (socket as any).userId = session.userId;
+      (socket as any).username = session.username;
+      authenticatedUsers.set(socket.id, { userId: session.userId, username: session.username });
+
+      next();
+    } catch (error) {
+      next(error instanceof Error ? error : new Error("Authentication failed"));
     }
-
-    const decoded = verifyToken(token);
-    if (!decoded) {
-      return next(new Error("Invalid or expired token"));
-    }
-
-    // Store user info on socket
-    (socket as any).userId = decoded.userId;
-    (socket as any).username = decoded.username;
-    authenticatedUsers.set(socket.id, { userId: decoded.userId, username: decoded.username });
-
-    next();
   });
-
-  // Track authenticated users by socket ID
-  const authenticatedUsers = new Map<string, { userId: string; username: string }>();
 
   app.get("/health", async (_, res) => {
     res.send("Healthy");
   });
 
-  app.post("/api/auth/login", (req, res) => {
-    const { username } = req.body;
-    if (!username || typeof username !== "string") {
-      res.status(400).json({ error: "Username is required" });
+  app.get("/api/auth/me", async (req, res) => {
+    const sessionId = getSessionIdFromRequest(req.headers.cookie);
+    if (!sessionId) {
+      res.status(401).json({ authenticated: false });
       return;
     }
 
-    const userId = v4();
-    const token = generateToken(userId, username);
-    res.json({ token, userId, username });
+    const session = await getSessionById(sessionId);
+    if (!session) {
+      res.status(401).json({ authenticated: false });
+      return;
+    }
+
+    res.json({
+      authenticated: true,
+      userId: session.userId,
+      username: session.username,
+      email: session.email,
+      picture: session.picture || null,
+    });
+  });
+
+  app.get("/api/auth/google/start", async (req, res) => {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI;
+
+    // Debug: log whether env vars are present (avoid printing secrets)
+    // eslint-disable-next-line no-console
+    console.log("Google OAuth env:", { hasClientId: !!clientId, hasRedirectUri: !!redirectUri });
+    if (!clientId || !redirectUri) {
+      res.status(500).json({ error: "Google OAuth is not configured" });
+      return;
+    }
+
+    const state = createOauthState();
+    const authUrl = new URL(GOOGLE_AUTH_URL);
+    authUrl.searchParams.set("client_id", clientId);
+    authUrl.searchParams.set("redirect_uri", redirectUri);
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("scope", GOOGLE_SCOPE);
+    authUrl.searchParams.set("access_type", "offline");
+    authUrl.searchParams.set("prompt", "select_account");
+    authUrl.searchParams.set("state", state);
+
+    res.setHeader("Set-Cookie", serializeCookie(OAUTH_STATE_COOKIE_NAME, state, 10 * 60 * 1000));
+    res.redirect(authUrl.toString());
+  });
+
+  app.get("/api/auth/google/callback", async (req, res) => {
+    const { code, state } = req.query as { code?: string; state?: string };
+    const cookieState = getOauthStateFromRequest(req.headers.cookie);
+
+    if (!code || !state || !cookieState || state !== cookieState) {
+      res.status(400).send("Invalid OAuth state");
+      return;
+    }
+
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI;
+    if (!redirectUri) {
+      res.status(500).send("Google OAuth is not configured");
+      return;
+    }
+
+    try {
+      const tokenResponse = await fetchGoogleToken(code, redirectUri);
+      const userInfo = await requestJson<GoogleUserInfo>(
+        `${GOOGLE_USERINFO_URL}?access_token=${encodeURIComponent(tokenResponse.access_token)}`,
+        "GET"
+      );
+
+      if (!userInfo.email || userInfo.email_verified === false) {
+        res.status(400).send("Google account email is not verified");
+        return;
+      }
+
+      const userId = userInfo.sub;
+      const username = userInfo.name || userInfo.email.split("@")[0];
+      const sessionId = await createSession({
+        userId,
+        username,
+        email: userInfo.email,
+        picture: userInfo.picture,
+      });
+
+      res.setHeader("Set-Cookie", [
+        serializeCookie(SESSION_COOKIE_NAME, sessionId, SESSION_MAX_AGE_MS),
+        clearCookie(OAUTH_STATE_COOKIE_NAME),
+      ]);
+      res.redirect("/");
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error("Google OAuth callback failed:", error);
+      res.status(500).send("Google authentication failed");
+    }
+  });
+
+  app.post("/api/auth/logout", async (req, res) => {
+    const sessionId = getSessionIdFromRequest(req.headers.cookie);
+    await revokeSession(sessionId);
+
+    res.setHeader("Set-Cookie", clearCookie(SESSION_COOKIE_NAME));
+    res.json({ ok: true });
   });
 
   const rooms = new Map<string, Room>();

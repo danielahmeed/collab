@@ -20,7 +20,7 @@ The Whiteboard Project aims to create a digital whiteboard application that allo
 - Frontend: React, Next.js
 - Backend: Node.js with WebSocket (Socket.IO), Express
 - Database: MongoDB
-- Authentication: JWT, OAuth
+- Authentication: Google OAuth with MongoDB-backed sessions
 
 ## Setup Instructions
 
@@ -44,7 +44,12 @@ The Whiteboard Project aims to create a digital whiteboard application that allo
    MONGODB_URI=mongodb://127.0.0.1:27017
    MONGODB_DB_NAME=digiboard
    PORT=3000
+   GOOGLE_CLIENT_ID=your-google-oauth-client-id
+   GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
+   GOOGLE_REDIRECT_URI=http://localhost:3000/api/auth/google/callback
    ```
+
+   The Google OAuth client must allow the callback URL above, and the app stores the active login in the `sessions` collection.
 
 4. **Run the development server:**
 

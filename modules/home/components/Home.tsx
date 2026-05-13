@@ -1,8 +1,8 @@
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useRouter } from "next/router";
 
-import { initSocket, getSocket } from "@/common/lib/socket";
+import { disconnectSocket, getSocket, initSocket } from "@/common/lib/socket";
 import { useModal } from "@/common/recoil/modal";
 import { useSetRoomId } from "@/common/recoil/room";
 
@@ -13,22 +13,44 @@ const Home = () => {
   const setAtomRoomId = useSetRoomId();
 
   const [roomId, setRoomId] = useState("");
-  const [username, setUsername] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [displayName, setDisplayName] = useState("");
 
   const router = useRouter();
 
   useEffect(() => {
     document.body.style.backgroundColor = "white";
 
-    // Check if token exists in localStorage
-    const storedToken = localStorage.getItem("auth_token");
-    if (storedToken) {
-      initSocket(storedToken);
-      setIsAuthenticated(true);
-    }
+    const restoreSession = async () => {
+      try {
+        const response = await fetch("/api/auth/me", {
+          credentials: "include",
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const data = (await response.json()) as {
+          authenticated: boolean;
+          userId: string;
+          username: string;
+          email: string;
+          picture?: string | null;
+        };
+
+        if (data.authenticated) {
+          setDisplayName(data.username);
+          initSocket();
+          setIsAuthenticated(true);
+        }
+      } catch {
+        return;
+      }
+    };
+
+    void restoreSession();
   }, []);
 
   useEffect(() => {
@@ -70,38 +92,25 @@ const Home = () => {
     };
   }, [setAtomRoomId, isAuthenticated]);
 
-  const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setError("");
+  const handleGoogleLogin = () => {
     setIsLoading(true);
-
-    try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Login failed");
-      }
-
-      const { token } = await response.json();
-      localStorage.setItem("auth_token", token);
-      initSocket(token);
-      setIsAuthenticated(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
-    } finally {
-      setIsLoading(false);
-    }
+    window.location.href = "/api/auth/google/start";
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem("auth_token");
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+    } finally {
+      disconnectSocket();
+    }
+
     setIsAuthenticated(false);
-    setUsername("");
+    setDisplayName("");
     setRoomId("");
+    setAtomRoomId("");
   };
 
   const handleCreateRoom = () => {
@@ -120,32 +129,19 @@ const Home = () => {
 
   if (!isAuthenticated) {
     return (
-      <div className="flex flex-col items-center py-24">
-        <h1 className="text-5xl font-extrabold leading-tight sm:text-extra">
+      <div className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-white via-zinc-50 to-zinc-100 px-6 py-24">
+        <h1 className="text-5xl font-extrabold leading-tight sm:text-6xl">
           Digiboard
         </h1>
-        <h3 className="text-xl sm:text-2xl">Real-time whiteboard</h3>
+        <h3 className="text-xl sm:text-2xl text-zinc-600">Real-time whiteboard</h3>
 
-        <form
-          className="mt-10 flex flex-col items-center gap-3 w-96"
-          onSubmit={handleLogin}
-        >
-          <label className="self-start font-bold leading-tight">
-            Enter your name to continue
-          </label>
-          <input
-            className="input"
-            id="username"
-            placeholder="Username..."
-            value={username}
-            onChange={(e) => setUsername(e.target.value.slice(0, 15))}
-            disabled={isLoading}
-          />
-          {error && <p className="text-red-500 text-sm">{error}</p>}
-          <button className="btn" type="submit" disabled={isLoading || !username}>
-            {isLoading ? "Logging in..." : "Login"}
-          </button>
-        </form>
+        <p className="mt-3 max-w-md text-center text-sm text-zinc-500">
+          Sign in with Google to use your Gmail account and keep your session stored securely on the server.
+        </p>
+
+        <button className="btn mt-10 min-w-72" onClick={handleGoogleLogin} disabled={isLoading}>
+          {isLoading ? "Redirecting to Google..." : "Continue with Google"}
+        </button>
       </div>
     );
   }
@@ -153,12 +149,12 @@ const Home = () => {
   return (
     <div className="flex flex-col items-center py-24">
       <div className="absolute top-5 right-5">
-        <button
-          className="text-sm text-zinc-500 hover:text-zinc-700"
-          onClick={handleLogout}
-        >
-          Logout
-        </button>
+        <div className="flex items-center gap-3 text-sm text-zinc-500">
+          <span>{displayName || "Signed in"}</span>
+          <button className="hover:text-zinc-700" onClick={handleLogout}>
+            Logout
+          </button>
+        </div>
       </div>
 
       <h1 className="text-5xl font-extrabold leading-tight sm:text-extra">

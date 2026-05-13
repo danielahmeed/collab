@@ -320,16 +320,22 @@ nextApp.prepare().then(async () => {
   app.get("/api/auth/me", async (req, res) => {
     const sessionId = getSessionIdFromRequest(req.headers.cookie);
     if (!sessionId) {
+      // eslint-disable-next-line no-console
+      console.log("/api/auth/me: no session cookie");
       res.status(401).json({ authenticated: false });
       return;
     }
 
     const session = await getSessionById(sessionId);
     if (!session) {
+      // eslint-disable-next-line no-console
+      console.log("/api/auth/me: session not found or expired", { sessionId: sessionId.substring(0, 8) });
       res.status(401).json({ authenticated: false });
       return;
     }
 
+    // eslint-disable-next-line no-console
+    console.log("/api/auth/me: session valid", { userId: session.userId, username: session.username });
     res.json({
       authenticated: true,
       userId: session.userId,
@@ -369,7 +375,19 @@ nextApp.prepare().then(async () => {
     const { code, state } = req.query as { code?: string; state?: string };
     const cookieState = getOauthStateFromRequest(req.headers.cookie);
 
+    // eslint-disable-next-line no-console
+    console.log("Google callback debug:", {
+      hasCode: !!code,
+      hasState: !!state,
+      cookieStatePresent: !!cookieState,
+      stateMatches: state === cookieState,
+      queryState: state ? state.substring(0, 8) : null,
+      cookieState: cookieState ? cookieState.substring(0, 8) : null,
+    });
+
     if (!code || !state || !cookieState || state !== cookieState) {
+      // eslint-disable-next-line no-console
+      console.log("Google callback rejected: Invalid OAuth state");
       res.status(400).send("Invalid OAuth state");
       return;
     }
@@ -400,6 +418,9 @@ nextApp.prepare().then(async () => {
         email: userInfo.email,
         picture: userInfo.picture,
       });
+
+      // eslint-disable-next-line no-console
+      console.log("Google OAuth success:", { userId, username, email: userInfo.email, sessionId: sessionId.substring(0, 8) });
 
       res.setHeader("Set-Cookie", [
         serializeCookie(SESSION_COOKIE_NAME, sessionId, SESSION_MAX_AGE_MS),

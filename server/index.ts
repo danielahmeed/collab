@@ -40,12 +40,21 @@ nextApp.prepare().then(async () => {
   });
 
   console.log("Connecting to MongoDB...");
-  await mongoClient.connect();
-  console.log("Connected to MongoDB");
-
-  const roomsCollection: Collection<PersistedRoom> = mongoClient
-    .db(mongoDbName)
-    .collection<PersistedRoom>("rooms");
+  let roomsCollection: Collection<PersistedRoom> | null = null;
+  try {
+    await mongoClient.connect();
+    console.log("Connected to MongoDB");
+    roomsCollection = mongoClient
+      .db(mongoDbName)
+      .collection<PersistedRoom>("rooms");
+  } catch (err) {
+    // If MongoDB is not available, continue running with in-memory state only.
+    // This prevents the process from crashing on startup in environments
+    // where a MongoDB instance isn't provisioned (e.g., quick deploys).
+    // Persistence-related operations will become no-ops.
+    // eslint-disable-next-line no-console
+    console.warn("Could not connect to MongoDB, running without persistence:", err);
+  }
 
   const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
     cors: { origin: "*" },
@@ -126,6 +135,7 @@ nextApp.prepare().then(async () => {
   };
 
   const saveRoomSnapshot = async (roomId: string, room: Room) => {
+    if (!roomsCollection) return;
     await roomsCollection.updateOne(
       { _id: roomId },
       {
@@ -142,6 +152,7 @@ nextApp.prepare().then(async () => {
   };
 
   const loadRoomFromDb = async (roomId: string) => {
+    if (!roomsCollection) return null;
     const savedRoom = await roomsCollection.findOne({ _id: roomId });
     if (!savedRoom) return null;
 
@@ -276,7 +287,7 @@ nextApp.prepare().then(async () => {
         roomId = Math.random().toString(36).substring(2, 6);
       } while (
         rooms.has(roomId) ||
-        !!(await roomsCollection.findOne({ _id: roomId }, { projection: { _id: 1 } }))
+        (roomsCollection && !!(await roomsCollection.findOne({ _id: roomId }, { projection: { _id: 1 } })))
       );
 
       socket.join(roomId);
@@ -302,12 +313,15 @@ nextApp.prepare().then(async () => {
         return;
       }
 
-      const roomExists = !!(await roomsCollection.findOne(
-        { _id: roomId },
-        { projection: { _id: 1 } }
-      ));
+      const roomExists =
+        rooms.has(roomId) ||
+        (roomsCollection &&
+          !!(await roomsCollection.findOne(
+            { _id: roomId },
+            { projection: { _id: 1 } }
+          )));
 
-      socket.emit("room_exists", roomExists);
+      socket.emit("room_exists", !!roomExists);
     });
 
     socket.on("join_room", async (roomId) => {
